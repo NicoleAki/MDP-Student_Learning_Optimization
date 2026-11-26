@@ -58,7 +58,7 @@ label{font-size:.88rem}
 <body>
 <main>
 <h1>Study Coach</h1>
-<p class="sub">A 120-minute study session modelled as a Markov Decision Process. Pick a starting point, then study yourself or let an AI coach (trained with Q-learning, right in your browser) pick the actions. Click any course name to rename it.</p>
+<p class="sub">A 120-minute study session modelled as a Markov Decision Process. Pick a starting point, then study yourself or let an AI coach (trained with Q-learning, right in your browser) pick the actions. Rename courses by clicking their names, and add or remove courses (2–8) to match your own timetable.</p>
 
 <section class="panel">
   <div class="row" style="margin-bottom:10px">
@@ -88,6 +88,12 @@ label{font-size:.88rem}
   </div>
 </section>
 
+<div class="row" style="margin-bottom:10px">
+  <strong style="color:var(--pen)">Courses</strong>
+  <button id="addC">Add course</button>
+  <button id="remC">Remove last course</button>
+  <span id="cnt" style="color:var(--mute);font-size:.85rem"></span>
+</div>
 <section class="grid" id="cards"></section>
 
 <section class="panel" style="margin-top:16px">
@@ -108,20 +114,31 @@ label{font-size:.88rem}
 </main>
 
 <script>
-const TOP=["Algebra","Geometry","Probability","Calculus"],N=4,COST=[15,10,20],MINC=10,TOTAL=120,HI=.7;
-const LAM=[.5,.5,2,.5],GAMMA=.95,ALPHA=.1,EPISODES=60000;
+let TOP=["Algebra","Geometry","Probability","Calculus"],N=TOP.length;
+const MINN=2,MAXN=8,COST=[15,10,20],MINC=10,TOTAL=120,HI=.7,NT=6,NA=3*NT;
+const LAM=[.5,.5,2,.5],GAMMA=.95,ALPHA=.1,EPISODES=40000;
+const $=id=>document.getElementById(id);
 const mean=a=>a.reduce((x,y)=>x+y,0)/a.length,U=(a,b)=>a+Math.random()*(b-a),clip=x=>Math.max(0,Math.min(1,x));
 const aName=a=>(["Study","Revise","Practice test on"][Math.floor(a/N)])+" "+TOP[a%N];
+/* A course has a "type" 0-5: (studied?) x (low / medium / high confidence). The coach learns over
+   counts of types, so its state space stays small however many courses there are. */
+const tyOf=(T,c)=>T*3+(c<.35?0:c<=HI?1:2);
 
 class Env{
   reset(s){this.T=[...s.T];this.C=[...s.C];this.P=[...s.P];this.t=s.t}
   score(){return .4*mean(this.T)+.4*mean(this.C)+.2*mean(this.P)}
-  key(){const cb=this.C.map(c=>c<.35?0:c<=HI?1:2),pm=mean(this.P);
-    return this.T.join("")+"|"+cb.join("")+"|"+this.t+"|"+(pm==0?0:pm<.5?1:2)}
-  valid(a){return a>=0&&a<3*N&&COST[Math.floor(a/N)]<=this.t&&
-    !(Math.floor(a/N)==0&&this.T[a%N])&&!(Math.floor(a/N)==1&&!this.T[a%N])}
+  types(){return this.T.map((x,i)=>tyOf(x,this.C[i]))}
+  key(){const n=[0,0,0,0,0,0];this.types().forEach(x=>n[x]++);const pm=mean(this.P);
+    return n.join("")+"|"+this.t+"|"+(pm==0?0:pm<.5?1:2)}
+  valid(a){const k=Math.floor(a/N),i=a%N;return a>=0&&a<3*N&&COST[k]<=this.t&&!(k==0&&this.T[i])&&!(k==1&&!this.T[i])}
   validList(){const l=[];for(let a=0;a<3*N;a++)if(this.valid(a))l.push(a);return l}
   done(){return this.t<MINC||!this.validList().length}
+  validAbs(a){const k=Math.floor(a/NT),ty=a%NT;
+    return COST[k]<=this.t&&!(k==0&&ty>=3)&&!(k==1&&ty<3)&&this.types().includes(ty)}
+  absList(){const l=[];for(let a=0;a<NA;a++)if(this.validAbs(a))l.push(a);return l}
+  concrete(a){const ty=a%NT,ts=this.types();let b=-1;       // weakest course of that type
+    ts.forEach((x,i)=>{if(x==ty&&(b<0||this.C[i]<this.C[b]))b=i});return Math.floor(a/NT)*N+b}
+  absOf(a){return Math.floor(a/N)*NT+this.types()[a%N]}
   step(a){
     const k=Math.floor(a/N),i=a%N,cost=COST[k],o={cov:mean(this.T),conf:mean(this.C),sc:this.score()};let msg,good=true;
     if(k==0){this.T[i]=1;const big=Math.random()<.85,g=big?U(.3,.5):U(.1,.2);this.C[i]=Math.min(1,this.C[i]+g);
@@ -130,7 +147,7 @@ class Env{
       else{this.C[i]=Math.min(1,this.C[i]+.02);msg=`Revised ${TOP[i]} – little progress (+2%).`;good=false}}
     else{const pass=Math.random()<(this.T[i]?.15+.8*this.C[i]:.1);
       if(pass){const g=U(.05,.15);this.C[i]=Math.min(1,this.C[i]+g);msg=`Passed the ${TOP[i]} practice test (confidence +${(g*100|0)}%).`}
-      else{const was=this.C[i],g=this.T[i]?U(.1,.25):U(.2,.4);this.C[i]=Math.max(0,this.C[i]-g);good=false;
+      else{const g=this.T[i]?U(.1,.25):U(.2,.4);this.C[i]=Math.max(0,this.C[i]-g);
         msg=this.T[i]?`Failed the ${TOP[i]} practice test – gaps found (confidence −${(g*100|0)}%).`:
           `Failed the ${TOP[i]} test – you hadn't studied it yet; confidence corrected.`}
       this.P[i]=.5*this.P[i]+.5*(pass?1:0);good=pass}
@@ -138,51 +155,59 @@ class Env{
     const r=LAM[0]*(mean(this.T)-o.cov)+LAM[1]*(mean(this.C)-o.conf)+LAM[2]*(this.score()-o.sc)-LAM[3]*cost/TOTAL;
     return{r,msg,good,cost}}
 }
+const zeros=()=>Array(N).fill(0);
 function randomStart(pFresh=.25){
-  if(Math.random()<pFresh)return{T:[0,0,0,0],C:[0,0,0,0],P:[0,0,0,0],t:TOTAL};
+  if(Math.random()<pFresh)return{T:zeros(),C:zeros(),P:zeros(),t:TOTAL};
   const T=[],C=[],P=[];
   for(let i=0;i<N;i++){const c=Math.random()<.4?1:0;T.push(c);
     if(c){const x=U(.2,.95);C.push(x);P.push(Math.random()<.3?clip(x+(Math.random()-.5)*.2):0)}
     else{C.push(Math.random()<.2?U(.7,.95):U(0,.3));P.push(0)}}
   return{T,C,P,t:15+5*Math.floor(Math.random()*22)}}
 const PRESETS={
-  fresh:()=>({T:[0,0,0,0],C:[0,0,0,0],P:[0,0,0,0],t:120}),
-  partial:()=>({T:[1,1,0,0],C:[.8,.4,.1,0],P:[.7,0,0,0],t:60}),
-  over:()=>({T:[1,1,0,1],C:[.75,.5,.9,.3],P:[0,0,0,0],t:90}),
+  fresh:()=>({T:zeros(),C:zeros(),P:zeros(),t:120}),
+  partial:()=>{const h=Math.ceil(N/2);return{T:Array.from({length:N},(_,i)=>+(i<h)),
+    C:Array.from({length:N},(_,i)=>i<h?[.8,.4,.6,.5][i%4]:[.1,0][i%2]),P:zeros(),t:60}},
+  over:()=>{const o=Math.min(2,N-1);return{T:Array.from({length:N},(_,i)=>+(i!=o)),
+    C:Array.from({length:N},(_,i)=>i==o?.9:[.75,.5,.3,.6][i%4]),P:zeros(),t:90}},
   rand:randomStart};
 
 function rulePolicy(e){ // decision logic from the model
-  const order=[0,1,2,3].sort((a,b)=>e.C[a]-e.C[b]);
+  const order=[...Array(N).keys()].sort((a,b)=>e.C[a]-e.C[b]);
   for(const i of order){const a=e.C[i]>HI?2*N+i:e.T[i]?N+i:i;if(e.valid(a))return a}
   const v=e.validList();return v.sort((x,y)=>COST[Math.floor(x/N)]-COST[Math.floor(y/N)])[0]}
 
-const Q=new Map();let trained=false;
-const qrow=k=>{let r=Q.get(k);if(!r){r=new Float64Array(3*N);Q.set(k,r)}return r};
-function coachPick(e){const r=Q.get(e.key());if(!r)return rulePolicy(e);
-  let best=-1,bq=-Infinity;for(const a of e.validList())if(r[a]>bq){bq=r[a];best=a}return best}
+const Q=new Map();let trained=false,trainTok=0;
+const qrow=k=>{let r=Q.get(k);if(!r){r=new Float64Array(NA);Q.set(k,r)}return r};
+function bestAbs(e,r){let best=-1,bq=-Infinity;for(const a of e.absList())if(r[a]>bq){bq=r[a];best=a}return best}
+function coachPick(e){const r=Q.get(e.key());return r?e.concrete(bestAbs(e,r)):rulePolicy(e)}
 function train(){
-  const e=new Env(),banner=document.getElementById("banner");let ep=0;
+  const tok=++trainTok,e=new Env();let ep=0;Q.clear();trained=false;
   (function chunk(){
+    if(tok!==trainTok)return;                      // course list changed: stop this run
     const end=Math.min(EPISODES,ep+2500);
     for(;ep<end;ep++){
       const eps=Math.max(.05,1-.95*ep/(.8*EPISODES));e.reset(randomStart());let done=e.done();
-      while(!done){const k=e.key(),v=e.validList();
-        const a=Math.random()<eps?v[Math.random()*v.length|0]:(Q.has(k)?coachPick(e):rulePolicy(e));
-        const {r}=e.step(a);done=e.done();let tgt=r;
-        if(!done){const q2=qrow(e.key());tgt+=GAMMA*Math.max(...e.validList().map(x=>q2[x]))}
+      while(!done){const k=e.key(),v=e.absList();
+        const a=Math.random()<eps?v[Math.random()*v.length|0]:(Q.has(k)?bestAbs(e,Q.get(k)):e.absOf(rulePolicy(e)));
+        const {r}=e.step(e.concrete(a));done=e.done();let tgt=r;
+        if(!done){const q2=qrow(e.key());tgt+=GAMMA*Math.max(...e.absList().map(x=>q2[x]))}
         const q=qrow(k);q[a]+=ALPHA*(tgt-q[a])}}
-    if(ep<EPISODES){banner.textContent=`Training the AI coach… ${Math.round(100*ep/EPISODES)}%`;setTimeout(chunk,0)}
-    else{trained=true;banner.textContent=`AI coach ready (Q-learning, ${EPISODES.toLocaleString()} practice sessions from random starting states). Highlighted buttons show its pick.`;render()}
+    if(ep<EPISODES){$("banner").textContent=`Training the AI coach for ${N} courses… ${Math.round(100*ep/EPISODES)}%`;setTimeout(chunk,0)}
+    else{trained=true;$("banner").textContent=`AI coach ready (Q-learning, ${EPISODES.toLocaleString()} practice sessions from random starting states, ${N} courses). Highlighted buttons show its pick.`;render()}
   })()}
 
 /* ---------- UI ---------- */
 const env=new Env();let start=PRESETS.fresh(),started=false,startScore=0,auto=null;
-const $=id=>document.getElementById(id);
 const cards=$("cards");
 try{const sv=JSON.parse(localStorage.getItem("studycoach_courses")||"null");
-  if(Array.isArray(sv))sv.slice(0,N).forEach((x,i)=>{if(typeof x==="string"&&x.trim())TOP[i]=x.trim().slice(0,24)})}catch(e){}
-TOP.forEach((n,i)=>{cards.insertAdjacentHTML("beforeend",`<div class="panel card" id="c${i}">
-  <h3><input class="nm" id="nm${i}" value="${n}" maxlength="24" aria-label="Course ${i+1} name" title="Click to rename this course"><span class="tag" id="tag${i}"></span></h3>
+  if(Array.isArray(sv)&&sv.length>=MINN&&sv.length<=MAXN){TOP=sv.map((x,i)=>String(x).trim().slice(0,24)||`Course ${i+1}`);N=TOP.length;start=PRESETS.fresh()}}catch(e){}
+const save=()=>{try{localStorage.setItem("studycoach_courses",JSON.stringify(TOP))}catch(err){}};
+const esc=x=>x.replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
+
+function buildCards(){
+  cards.innerHTML="";
+  TOP.forEach((n,i)=>{cards.insertAdjacentHTML("beforeend",`<div class="panel card" id="c${i}">
+  <h3><input class="nm" id="nm${i}" value="${esc(n)}" maxlength="24" aria-label="Course ${i+1} name" title="Click to rename this course"><span class="tag" id="tag${i}"></span></h3>
   <div class="setup"><label><input type="checkbox" id="tg${i}"> studied</label><input type="range" id="sl${i}" min="0" max="100" aria-label="Course ${i+1} confidence"></div>
   <div class="bar"><i id="bar${i}"></i><u title="70% = high confidence"></u></div>
   <div class="meta" id="m${i}"></div>
@@ -190,7 +215,12 @@ TOP.forEach((n,i)=>{cards.insertAdjacentHTML("beforeend",`<div class="panel card
    <button data-a="${i}" id="a${i}"><span>Study</span><span>15m</span></button>
    <button data-a="${N+i}" id="a${N+i}"><span>Revise</span><span>10m</span></button>
    <button data-a="${2*N+i}" id="a${2*N+i}"><span>Practice test</span><span>20m</span></button>
-  </div></div>`)});
+  </div></div>`);
+    $("tg"+i).onchange=e=>{start.T[i]=e.target.checked?1:0;restart()};
+    $("sl"+i).oninput=e=>{start.C[i]=e.target.value/100;restart()};
+    $("nm"+i).oninput=e=>{TOP[i]=e.target.value.trim()||`Course ${i+1}`;save();render()}});
+  $("cnt").textContent=`${N} courses (restarts the session when changed)`;
+  $("addC").disabled=N>=MAXN;$("remC").disabled=N<=MINN}
 
 function render(){
   const rec=trained&&!env.done()?coachPick(env):-1;
@@ -224,21 +254,19 @@ function act(a,who){
   $("log").insertAdjacentHTML("afterbegin",`<li class="${res.good?"ok":"bad"}"><small>${t0}→${env.t} min · ${who}</small><br>${res.msg}</li>`);
   render()}
 function stopAuto(){if(auto){clearInterval(auto);auto=null}}
+function resize(delta){                            // add / remove a course, then retrain the coach
+  stopAuto();
+  if(delta>0){TOP.push(`Course ${N+1}`);start.T.push(0);start.C.push(0);start.P.push(0)}
+  else{TOP.pop();start.T.pop();start.C.pop();start.P.pop()}
+  N=TOP.length;save();buildCards();restart();train()}
 cards.addEventListener("click",e=>{const b=e.target.closest("button[data-a]");if(b){stopAuto();act(+b.dataset.a,"you")}});
 $("aiStep").onclick=()=>{stopAuto();act(coachPick(env),"coach")};
 $("aiAuto").onclick=()=>{auto=setInterval(()=>{if(env.done()){stopAuto();render();return}act(coachPick(env),"coach")},750);render()};
 $("restart").onclick=restart;
+$("addC").onclick=()=>{if(N<MAXN)resize(1)};$("remC").onclick=()=>{if(N>MINN)resize(-1)};
 document.querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>load(PRESETS[b.dataset.p]()));
 $("tsl").oninput=e=>{start.t=+e.target.value;restart()};
-TOP.forEach((n,i)=>{
-  $("tg"+i).onchange=e=>{start.T[i]=e.target.checked?1:0;restart()};
-  $("sl"+i).oninput=e=>{start.C[i]=e.target.value/100;restart()}});
-
-TOP.forEach((n,i)=>{$("nm"+i).oninput=e=>{
-  TOP[i]=e.target.value.trim()||`Course ${i+1}`;
-  try{localStorage.setItem("studycoach_courses",JSON.stringify(TOP))}catch(err){}
-  render()}});
-restart();train();
+buildCards();restart();train();
 </script>
 </body>
 </html>
