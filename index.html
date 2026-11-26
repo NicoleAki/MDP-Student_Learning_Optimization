@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Study Coach – MDP + Q-learning simulator</title>
+<style>
+:root{--bg:#fff;--paper:#fff;--ink:#000;--mute:#555;--line:#d9d9d9;--pen:#1a56db;--hl:#bdf0d1;--ok:#14804f;--bad:#c62f46;--gbg:#e6f7ed;--gline:#2fa56f}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg)}
+input[type=range],input[type=checkbox]{accent-color:var(--pen)}
+main{max-width:1000px;margin:0 auto;padding:24px 16px 48px}
+h1{font:700 1.9rem/1.15 Georgia,"Iowan Old Style",serif;margin:0 0 4px;color:var(--pen)}
+.sub{color:var(--mute);margin:0 0 20px;max-width:62ch}
+.panel{background:var(--paper);border:1.5px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.top{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:640px){.top{grid-template-columns:1fr}}
+.big{font:700 2.4rem/1 Georgia,serif}.big small{font:500 .9rem system-ui;color:var(--mute)}
+.meter{height:12px;background:var(--line);border-radius:6px;overflow:hidden;margin:8px 0 4px}
+.meter i{display:block;height:100%;background:var(--pen);transition:width .4s}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button{font:600 .9rem system-ui;border:1.5px solid var(--ink);background:var(--paper);color:var(--ink);border-radius:8px;padding:7px 12px;cursor:pointer}
+button:hover:not(:disabled){background:var(--ink);color:var(--paper)}
+button:disabled{opacity:.4;cursor:not-allowed}
+button:focus-visible,input:focus-visible{outline:3px solid var(--pen);outline-offset:2px}
+button.main{background:var(--pen);border-color:var(--pen);color:#fff}
+button.main:hover:not(:disabled){background:var(--ink);border-color:var(--ink)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.card h3{color:var(--pen);margin:0 0 8px;font:700 1.1rem Georgia,serif;display:flex;justify-content:space-between;align-items:center}
+.tag{font:600 .75rem system-ui;border-radius:20px;padding:2px 9px;border:1.5px solid var(--line);color:var(--mute)}
+.tag.on{border-color:var(--ok);color:var(--ok)}.tag.over{border-color:var(--bad);color:var(--bad)}
+.bar{position:relative;height:18px;background:var(--line);border-radius:4px;overflow:visible}
+.bar i{display:block;height:100%;background:var(--pen);border-radius:4px;transition:width .5s}
+.bar u{position:absolute;left:70%;top:-4px;bottom:-4px;border-left:2px dashed var(--ink);opacity:.55}
+.meta{font-size:.82rem;color:var(--mute);margin:6px 0 10px;min-height:1.3em}
+.acts{display:grid;gap:6px}
+.acts button{text-align:left;display:flex;justify-content:space-between}
+.acts button.rec{background:var(--hl);color:#000;border-color:var(--ok);box-shadow:3px 3px 0 var(--ok)}
+.acts button.rec:hover:not(:disabled){background:var(--hl);color:#000}
+.setup{display:flex;gap:8px;align-items:center;font-size:.85rem;margin-bottom:8px}
+.setup input[type=range]{flex:1}
+body.started .setup{display:none}
+label{font-size:.88rem}
+.logp{background:var(--gbg);border-color:var(--gline);border-left-width:8px}
+.logp>strong{color:var(--pen);font:700 1.1rem Georgia,serif}
+#log li{border-bottom-color:var(--gline)!important}
+#log{list-style:none;margin:0;padding:0;max-height:260px;overflow:auto;font-size:.92rem}
+#log li{padding:6px 0;border-bottom:1px solid var(--line)}
+#log .ok{color:var(--ok)}#log .bad{color:var(--bad)}#log small{color:var(--mute)}
+#banner{font-size:.9rem;color:var(--mute)}
+.final{border-color:var(--pen)}
+.hide{display:none}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+<h1>Study Coach</h1>
+<p class="sub">A 120-minute study session modelled as a Markov Decision Process. Pick a starting point, then study yourself or let an AI coach (trained with Q-learning, right in your browser) pick the actions.</p>
+
+<section class="panel">
+  <div class="row" style="margin-bottom:10px">
+    <strong style="color:var(--pen)">Start as:</strong>
+    <button data-p="fresh">Fresh student</button>
+    <button data-p="partial">Half prepared</button>
+    <button data-p="over">Overconfident</button>
+    <button data-p="rand">Random</button>
+  </div>
+  <div class="row setup" id="timeSetup" style="font-size:.9rem">
+    <label for="tsl">Minutes available: <b id="tval">120</b></label>
+    <input id="tsl" type="range" min="15" max="120" step="5" value="120">
+  </div>
+  <div id="banner">Training the AI coach…</div>
+</section>
+
+<section class="top">
+  <div class="panel">
+    <div class="row" style="justify-content:space-between"><span>Time left</span><b id="tleft">120 min</b></div>
+    <div class="meter"><i id="tbar" style="width:100%"></i></div>
+    <div class="row" style="gap:6px;font-size:.82rem;color:var(--mute)">Study 15 min · Revise 10 min · Practice test 20 min</div>
+  </div>
+  <div class="panel">
+    <div class="row" style="justify-content:space-between"><span>Expected exam score</span><span id="delta" style="color:var(--mute);font-size:.9rem"></span></div>
+    <div class="big"><span id="score">0</span><small> / 100</small></div>
+    <div style="font-size:.8rem;color:var(--mute)">40% coverage + 40% avg confidence + 20% practice accuracy</div>
+  </div>
+</section>
+
+<section class="grid" id="cards"></section>
+
+<section class="panel" style="margin-top:16px">
+  <div class="row">
+    <button class="main" id="aiStep" disabled>Do the coach's pick</button>
+    <button id="aiAuto" disabled>Auto-play the rest</button>
+    <button id="restart">Restart this start</button>
+    <span id="recTxt" style="color:var(--mute);font-size:.9rem"></span>
+  </div>
+</section>
+
+<section class="panel hide final" id="final"></section>
+
+<section class="panel logp">
+  <strong>Session log</strong>
+  <ol id="log" reversed></ol>
+</section>
+</main>
+
+<script>
+const TOP=["Algebra","Geometry","Probability","Calculus"],N=4,COST=[15,10,20],MINC=10,TOTAL=120,HI=.7;
+const LAM=[.5,.5,2,.5],GAMMA=.95,ALPHA=.1,EPISODES=60000;
+const mean=a=>a.reduce((x,y)=>x+y,0)/a.length,U=(a,b)=>a+Math.random()*(b-a),clip=x=>Math.max(0,Math.min(1,x));
+const aName=a=>(["Study","Revise","Practice test on"][Math.floor(a/N)])+" "+TOP[a%N];
+
+class Env{
+  reset(s){this.T=[...s.T];this.C=[...s.C];this.P=[...s.P];this.t=s.t}
+  score(){return .4*mean(this.T)+.4*mean(this.C)+.2*mean(this.P)}
+  key(){const cb=this.C.map(c=>c<.35?0:c<=HI?1:2),pm=mean(this.P);
+    return this.T.join("")+"|"+cb.join("")+"|"+this.t+"|"+(pm==0?0:pm<.5?1:2)}
+  valid(a){return a>=0&&a<3*N&&COST[Math.floor(a/N)]<=this.t&&
+    !(Math.floor(a/N)==0&&this.T[a%N])&&!(Math.floor(a/N)==1&&!this.T[a%N])}
+  validList(){const l=[];for(let a=0;a<3*N;a++)if(this.valid(a))l.push(a);return l}
+  done(){return this.t<MINC||!this.validList().length}
+  step(a){
+    const k=Math.floor(a/N),i=a%N,cost=COST[k],o={cov:mean(this.T),conf:mean(this.C),sc:this.score()};let msg,good=true;
+    if(k==0){this.T[i]=1;const big=Math.random()<.85,g=big?U(.3,.5):U(.1,.2);this.C[i]=Math.min(1,this.C[i]+g);
+      msg=big?`Studied ${TOP[i]} – it clicked (confidence +${(g*100|0)}%).`:`Studied ${TOP[i]} – tough going, only +${(g*100|0)}%.`;good=big}
+    else if(k==1){if(Math.random()<.9){const g=(1-this.C[i])*U(.25,.5);this.C[i]+=g;msg=`Revised ${TOP[i]} (confidence +${(g*100|0)}%).`}
+      else{this.C[i]=Math.min(1,this.C[i]+.02);msg=`Revised ${TOP[i]} – little progress (+2%).`;good=false}}
+    else{const pass=Math.random()<(this.T[i]?.15+.8*this.C[i]:.1);
+      if(pass){const g=U(.05,.15);this.C[i]=Math.min(1,this.C[i]+g);msg=`Passed the ${TOP[i]} practice test (confidence +${(g*100|0)}%).`}
+      else{const was=this.C[i],g=this.T[i]?U(.1,.25):U(.2,.4);this.C[i]=Math.max(0,this.C[i]-g);good=false;
+        msg=this.T[i]?`Failed the ${TOP[i]} practice test – gaps found (confidence −${(g*100|0)}%).`:
+          `Failed the ${TOP[i]} test – you hadn't studied it yet; confidence corrected.`}
+      this.P[i]=.5*this.P[i]+.5*(pass?1:0);good=pass}
+    this.t-=cost;
+    const r=LAM[0]*(mean(this.T)-o.cov)+LAM[1]*(mean(this.C)-o.conf)+LAM[2]*(this.score()-o.sc)-LAM[3]*cost/TOTAL;
+    return{r,msg,good,cost}}
+}
+function randomStart(pFresh=.25){
+  if(Math.random()<pFresh)return{T:[0,0,0,0],C:[0,0,0,0],P:[0,0,0,0],t:TOTAL};
+  const T=[],C=[],P=[];
+  for(let i=0;i<N;i++){const c=Math.random()<.4?1:0;T.push(c);
+    if(c){const x=U(.2,.95);C.push(x);P.push(Math.random()<.3?clip(x+(Math.random()-.5)*.2):0)}
+    else{C.push(Math.random()<.2?U(.7,.95):U(0,.3));P.push(0)}}
+  return{T,C,P,t:15+5*Math.floor(Math.random()*22)}}
+const PRESETS={
+  fresh:()=>({T:[0,0,0,0],C:[0,0,0,0],P:[0,0,0,0],t:120}),
+  partial:()=>({T:[1,1,0,0],C:[.8,.4,.1,0],P:[.7,0,0,0],t:60}),
+  over:()=>({T:[1,1,0,1],C:[.75,.5,.9,.3],P:[0,0,0,0],t:90}),
+  rand:randomStart};
+
+function rulePolicy(e){ // decision logic from the model
+  const order=[0,1,2,3].sort((a,b)=>e.C[a]-e.C[b]);
+  for(const i of order){const a=e.C[i]>HI?2*N+i:e.T[i]?N+i:i;if(e.valid(a))return a}
+  const v=e.validList();return v.sort((x,y)=>COST[Math.floor(x/N)]-COST[Math.floor(y/N)])[0]}
+
+const Q=new Map();let trained=false;
+const qrow=k=>{let r=Q.get(k);if(!r){r=new Float64Array(3*N);Q.set(k,r)}return r};
+function coachPick(e){const r=Q.get(e.key());if(!r)return rulePolicy(e);
+  let best=-1,bq=-Infinity;for(const a of e.validList())if(r[a]>bq){bq=r[a];best=a}return best}
+function train(){
+  const e=new Env(),banner=document.getElementById("banner");let ep=0;
+  (function chunk(){
+    const end=Math.min(EPISODES,ep+2500);
+    for(;ep<end;ep++){
+      const eps=Math.max(.05,1-.95*ep/(.8*EPISODES));e.reset(randomStart());let done=e.done();
+      while(!done){const k=e.key(),v=e.validList();
+        const a=Math.random()<eps?v[Math.random()*v.length|0]:(Q.has(k)?coachPick(e):rulePolicy(e));
+        const {r}=e.step(a);done=e.done();let tgt=r;
+        if(!done){const q2=qrow(e.key());tgt+=GAMMA*Math.max(...e.validList().map(x=>q2[x]))}
+        const q=qrow(k);q[a]+=ALPHA*(tgt-q[a])}}
+    if(ep<EPISODES){banner.textContent=`Training the AI coach… ${Math.round(100*ep/EPISODES)}%`;setTimeout(chunk,0)}
+    else{trained=true;banner.textContent=`AI coach ready (Q-learning, ${EPISODES.toLocaleString()} practice sessions from random starting states). Highlighted buttons show its pick.`;render()}
+  })()}
+
+/* ---------- UI ---------- */
+const env=new Env();let start=PRESETS.fresh(),started=false,startScore=0,auto=null;
+const $=id=>document.getElementById(id);
+const cards=$("cards");
+TOP.forEach((n,i)=>{cards.insertAdjacentHTML("beforeend",`<div class="panel card" id="c${i}">
+  <h3>${n}<span class="tag" id="tag${i}"></span></h3>
+  <div class="setup"><label><input type="checkbox" id="tg${i}"> studied</label><input type="range" id="sl${i}" min="0" max="100" aria-label="${n} confidence"></div>
+  <div class="bar"><i id="bar${i}"></i><u title="70% = high confidence"></u></div>
+  <div class="meta" id="m${i}"></div>
+  <div class="acts">
+   <button data-a="${i}" id="a${i}"><span>Study</span><span>15m</span></button>
+   <button data-a="${N+i}" id="a${N+i}"><span>Revise</span><span>10m</span></button>
+   <button data-a="${2*N+i}" id="a${2*N+i}"><span>Practice test</span><span>20m</span></button>
+  </div></div>`)});
+
+function render(){
+  const rec=trained&&!env.done()?coachPick(env):-1;
+  TOP.forEach((n,i)=>{
+    const c=env.C[i],studied=env.T[i]==1;
+    $("bar"+i).style.width=c*100+"%";
+    const tag=$("tag"+i);tag.className="tag"+(studied?" on":c>HI?" over":"");
+    tag.textContent=studied?"studied":c>HI?"unstudied, feels confident":"not studied";
+    $("m"+i).textContent=`Confidence ${Math.round(c*100)}%`+(env.P[i]>0?` · practice accuracy ${Math.round(env.P[i]*100)}%`:"");
+    for(const a of [i,N+i,2*N+i]){const b=$("a"+a);b.disabled=!env.valid(a)||env.done();b.classList.toggle("rec",a===rec)}
+    if(!started){$("tg"+i).checked=studied;$("sl"+i).value=Math.round(c*100)}
+  });
+  $("tleft").textContent=env.t+" min";$("tbar").style.width=env.t/TOTAL*100+"%";
+  const sc=env.score()*100;$("score").textContent=sc.toFixed(0);
+  const d=sc-startScore;$("delta").textContent=started?`${d>=0?"+":""}${d.toFixed(0)} since start`:"";
+  $("aiStep").disabled=!trained||env.done();$("aiAuto").disabled=!trained||env.done()||!!auto;
+  $("recTxt").textContent=rec>=0?`Coach suggests: ${aName(rec)}`:"";
+  $("tval").textContent=start.t;$("tsl").value=start.t;
+  document.body.classList.toggle("started",started);
+  $("timeSetup").classList.toggle("hide",started);
+  const f=$("final");
+  if(env.done()&&started){f.classList.remove("hide");
+    f.innerHTML=`<strong>Session over.</strong> Expected exam score went from <b>${startScore.toFixed(0)}</b> to <b>${sc.toFixed(0)}</b> (${env.t} min unused – too short for another action). Pick a different start or restart to compare strategies.`}
+  else f.classList.add("hide")}
+
+function load(s){stopAuto();start=JSON.parse(JSON.stringify(s));restart()}
+function restart(){stopAuto();env.reset(start);started=false;startScore=env.score()*100;$("log").innerHTML="";render()}
+function act(a,who){
+  if(!env.valid(a))return;started=true;
+  const t0=env.t,res=env.step(a);
+  $("log").insertAdjacentHTML("afterbegin",`<li class="${res.good?"ok":"bad"}"><small>${t0}→${env.t} min · ${who}</small><br>${res.msg}</li>`);
+  render()}
+function stopAuto(){if(auto){clearInterval(auto);auto=null}}
+cards.addEventListener("click",e=>{const b=e.target.closest("button[data-a]");if(b){stopAuto();act(+b.dataset.a,"you")}});
+$("aiStep").onclick=()=>{stopAuto();act(coachPick(env),"coach")};
+$("aiAuto").onclick=()=>{auto=setInterval(()=>{if(env.done()){stopAuto();render();return}act(coachPick(env),"coach")},750);render()};
+$("restart").onclick=restart;
+document.querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>load(PRESETS[b.dataset.p]()));
+$("tsl").oninput=e=>{start.t=+e.target.value;restart()};
+TOP.forEach((n,i)=>{
+  $("tg"+i).onchange=e=>{start.T[i]=e.target.checked?1:0;restart()};
+  $("sl"+i).oninput=e=>{start.C[i]=e.target.value/100;restart()}});
+
+restart();train();
+</script>
+</body>
+</html>
