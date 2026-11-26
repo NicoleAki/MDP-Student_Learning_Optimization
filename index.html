@@ -27,7 +27,9 @@ button.main{background:var(--pen);border-color:var(--pen);color:#fff}
 button.main:hover:not(:disabled){background:var(--ink);border-color:var(--ink)}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
 .card h3{color:var(--pen);margin:0 0 8px;font:700 1.1rem Georgia,serif;display:flex;justify-content:space-between;align-items:center}
-.tag{font:600 .75rem system-ui;border-radius:20px;padding:2px 9px;border:1.5px solid var(--line);color:var(--mute)}
+.nm{font:700 1.1rem Georgia,serif;color:var(--pen);border:0;border-bottom:1.5px dashed var(--line);background:transparent;flex:1;min-width:0;margin-right:8px;padding:0 0 2px;border-radius:0}
+.nm:hover{border-bottom-color:var(--pen)}.nm:focus{outline:none;border-bottom:2px solid var(--pen)}
+.tag{white-space:nowrap;font:600 .75rem system-ui;border-radius:20px;padding:2px 9px;border:1.5px solid var(--line);color:var(--mute)}
 .tag.on{border-color:var(--ok);color:var(--ok)}.tag.over{border-color:var(--bad);color:var(--bad)}
 .bar{position:relative;height:18px;background:var(--line);border-radius:4px;overflow:visible}
 .bar i{display:block;height:100%;background:var(--pen);border-radius:4px;transition:width .5s}
@@ -56,7 +58,7 @@ label{font-size:.88rem}
 <body>
 <main>
 <h1>Study Coach</h1>
-<p class="sub">A 120-minute study session modelled as a Markov Decision Process. Pick a starting point, then study yourself or let an AI coach (trained with Q-learning, right in your browser) pick the actions.</p>
+<p class="sub">A 120-minute study session modelled as a Markov Decision Process. Pick a starting point, then study yourself or let an AI coach (trained with Q-learning, right in your browser) pick the actions. Click any course name to rename it.</p>
 
 <section class="panel">
   <div class="row" style="margin-bottom:10px">
@@ -177,9 +179,11 @@ function train(){
 const env=new Env();let start=PRESETS.fresh(),started=false,startScore=0,auto=null;
 const $=id=>document.getElementById(id);
 const cards=$("cards");
+try{const sv=JSON.parse(localStorage.getItem("studycoach_courses")||"null");
+  if(Array.isArray(sv))sv.slice(0,N).forEach((x,i)=>{if(typeof x==="string"&&x.trim())TOP[i]=x.trim().slice(0,24)})}catch(e){}
 TOP.forEach((n,i)=>{cards.insertAdjacentHTML("beforeend",`<div class="panel card" id="c${i}">
-  <h3>${n}<span class="tag" id="tag${i}"></span></h3>
-  <div class="setup"><label><input type="checkbox" id="tg${i}"> studied</label><input type="range" id="sl${i}" min="0" max="100" aria-label="${n} confidence"></div>
+  <h3><input class="nm" id="nm${i}" value="${n}" maxlength="24" aria-label="Course ${i+1} name" title="Click to rename this course"><span class="tag" id="tag${i}"></span></h3>
+  <div class="setup"><label><input type="checkbox" id="tg${i}"> studied</label><input type="range" id="sl${i}" min="0" max="100" aria-label="Course ${i+1} confidence"></div>
   <div class="bar"><i id="bar${i}"></i><u title="70% = high confidence"></u></div>
   <div class="meta" id="m${i}"></div>
   <div class="acts">
@@ -230,6 +234,10 @@ TOP.forEach((n,i)=>{
   $("tg"+i).onchange=e=>{start.T[i]=e.target.checked?1:0;restart()};
   $("sl"+i).oninput=e=>{start.C[i]=e.target.value/100;restart()}});
 
+TOP.forEach((n,i)=>{$("nm"+i).oninput=e=>{
+  TOP[i]=e.target.value.trim()||`Course ${i+1}`;
+  try{localStorage.setItem("studycoach_courses",JSON.stringify(TOP))}catch(err){}
+  render()}});
 restart();train();
 </script>
 </body>
