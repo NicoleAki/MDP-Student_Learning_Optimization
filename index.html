@@ -73,6 +73,7 @@ label{font-size:.88rem}
     <input id="tsl" type="range" min="15" max="120" step="5" value="120">
   </div>
   <div id="banner">Training the AI coach…</div>
+  <div style="font-size:.85rem;color:var(--mute);margin-top:6px">Optional: type each course's past test scores (quizzes, mid-sem) on its card, e.g. <i>55, 68, 80</i>. Starting confidence is then calculated from them (recent tests count more; with only one or two tests it stays cautious).</div>
 </section>
 
 <section class="top">
@@ -117,7 +118,7 @@ label{font-size:.88rem}
 let TOP=["Algebra","Geometry","Probability","Calculus"],N=TOP.length;
 const MINN=2,MAXN=8,COST=[15,10,20],MINC=10,TOTAL=120,HI=.7,NT=6,NA=3*NT;
 const LAM=[.5,.5,2,.5],GAMMA=.95,ALPHA=.1,EPISODES=40000;
-const $=id=>document.getElementById(id);
+const $=id=>document.getElementById(id),d_=document;
 const mean=a=>a.reduce((x,y)=>x+y,0)/a.length,U=(a,b)=>a+Math.random()*(b-a),clip=x=>Math.max(0,Math.min(1,x));
 const aName=a=>(["Study","Revise","Practice test on"][Math.floor(a/N)])+" "+TOP[a%N];
 /* A course has a "type" 0-5: (studied?) x (low / medium / high confidence). The coach learns over
@@ -155,6 +156,13 @@ class Env{
     const r=LAM[0]*(mean(this.T)-o.cov)+LAM[1]*(mean(this.C)-o.conf)+LAM[2]*(this.score()-o.sc)-LAM[3]*cost/TOTAL;
     return{r,msg,good,cost}}
 }
+/* Confidence from past tests (0-100 scores): recency-weighted mean (latest test counts most),
+   shrunk toward 50 when there are few tests, so one lucky quiz can't create full confidence. */
+const fromTests=sc=>{const n=sc.length,w=sc.map((_,i)=>i+1),W=w.reduce((a,b)=>a+b,0);
+  const m=sc.reduce((a,x,i)=>a+x*w[i],0)/W;return clip(((n*m+.5*50)/(n+.5))/100)};
+const parseScores=t=>t.split(/[,\s;]+/).map(Number).filter(x=>t.trim()&&isFinite(x)).map(x=>Math.max(0,Math.min(100,x))).slice(0,10);
+const withS=s=>({...s,S:(s.S||Array.from({length:s.T.length},()=>[])).map(a=>[...a])});
+function syncTests(){start.S.forEach((sc,i)=>{if(sc.length){start.T[i]=1;start.C[i]=fromTests(sc)}})}
 const zeros=()=>Array(N).fill(0);
 function randomStart(pFresh=.25){
   if(Math.random()<pFresh)return{T:zeros(),C:zeros(),P:zeros(),t:TOTAL};
@@ -197,10 +205,10 @@ function train(){
   })()}
 
 /* ---------- UI ---------- */
-const env=new Env();let start=PRESETS.fresh(),started=false,startScore=0,auto=null;
+const env=new Env();let start=withS(PRESETS.fresh()),started=false,startScore=0,auto=null;
 const cards=$("cards");
 try{const sv=JSON.parse(localStorage.getItem("studycoach_courses")||"null");
-  if(Array.isArray(sv)&&sv.length>=MINN&&sv.length<=MAXN){TOP=sv.map((x,i)=>String(x).trim().slice(0,24)||`Course ${i+1}`);N=TOP.length;start=PRESETS.fresh()}}catch(e){}
+  if(Array.isArray(sv)&&sv.length>=MINN&&sv.length<=MAXN){TOP=sv.map((x,i)=>String(x).trim().slice(0,24)||`Course ${i+1}`);N=TOP.length;start=withS(PRESETS.fresh())}}catch(e){}
 const save=()=>{try{localStorage.setItem("studycoach_courses",JSON.stringify(TOP))}catch(err){}};
 const esc=x=>x.replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
 
@@ -209,6 +217,7 @@ function buildCards(){
   TOP.forEach((n,i)=>{cards.insertAdjacentHTML("beforeend",`<div class="panel card" id="c${i}">
   <h3><input class="nm" id="nm${i}" value="${esc(n)}" maxlength="24" aria-label="Course ${i+1} name" title="Click to rename this course"><span class="tag" id="tag${i}"></span></h3>
   <div class="setup"><label><input type="checkbox" id="tg${i}"> studied</label><input type="range" id="sl${i}" min="0" max="100" aria-label="Course ${i+1} confidence"></div>
+  <div class="setup"><label for="ts${i}">Past tests %</label><input class="ts" id="ts${i}" placeholder="e.g. 55, 68, 80" aria-label="Course ${i+1} past test scores"></div>
   <div class="bar"><i id="bar${i}"></i><u title="70% = high confidence"></u></div>
   <div class="meta" id="m${i}"></div>
   <div class="acts">
@@ -218,6 +227,7 @@ function buildCards(){
   </div></div>`);
     $("tg"+i).onchange=e=>{start.T[i]=e.target.checked?1:0;restart()};
     $("sl"+i).oninput=e=>{start.C[i]=e.target.value/100;restart()};
+    $("ts"+i).oninput=e=>{start.S[i]=parseScores(e.target.value);restart()};
     $("nm"+i).oninput=e=>{TOP[i]=e.target.value.trim()||`Course ${i+1}`;save();render()}});
   $("cnt").textContent=`${N} courses (restarts the session when changed)`;
   $("addC").disabled=N>=MAXN;$("remC").disabled=N<=MINN}
@@ -229,9 +239,11 @@ function render(){
     $("bar"+i).style.width=c*100+"%";
     const tag=$("tag"+i);tag.className="tag"+(studied?" on":c>HI?" over":"");
     tag.textContent=studied?"studied":c>HI?"unstudied, feels confident":"not studied";
-    $("m"+i).textContent=`Confidence ${Math.round(c*100)}%`+(env.P[i]>0?` · practice accuracy ${Math.round(env.P[i]*100)}%`:"");
+    $("m"+i).textContent=`Confidence ${Math.round(c*100)}%`+(env.P[i]>0?` · practice accuracy ${Math.round(env.P[i]*100)}%`:"")+(!started&&start.S[i].length?` · from ${start.S[i].length} past test${start.S[i].length>1?"s":""}`:"");
     for(const a of [i,N+i,2*N+i]){const b=$("a"+a);b.disabled=!env.valid(a)||env.done();b.classList.toggle("rec",a===rec)}
-    if(!started){$("tg"+i).checked=studied;$("sl"+i).value=Math.round(c*100)}
+    if(!started){const has=start.S[i].length>0;$("tg"+i).checked=studied;$("sl"+i).value=Math.round(c*100);
+      $("tg"+i).disabled=has;$("sl"+i).disabled=has;
+      const ti=$("ts"+i);if(d_.activeElement!==ti)ti.value=start.S[i].join(", ")}
   });
   $("tleft").textContent=env.t+" min";$("tbar").style.width=env.t/TOTAL*100+"%";
   const sc=env.score()*100;$("score").textContent=sc.toFixed(0);
@@ -246,8 +258,8 @@ function render(){
     f.innerHTML=`<strong>Session over.</strong> Expected exam score went from <b>${startScore.toFixed(0)}</b> to <b>${sc.toFixed(0)}</b> (${env.t} min unused – too short for another action). Pick a different start or restart to compare strategies.`}
   else f.classList.add("hide")}
 
-function load(s){stopAuto();start=JSON.parse(JSON.stringify(s));restart()}
-function restart(){stopAuto();env.reset(start);started=false;startScore=env.score()*100;$("log").innerHTML="";render()}
+function load(s){stopAuto();start=withS(JSON.parse(JSON.stringify(s)));restart()}
+function restart(){stopAuto();syncTests();env.reset(start);started=false;startScore=env.score()*100;$("log").innerHTML="";render()}
 function act(a,who){
   if(!env.valid(a))return;started=true;
   const t0=env.t,res=env.step(a);
@@ -256,8 +268,8 @@ function act(a,who){
 function stopAuto(){if(auto){clearInterval(auto);auto=null}}
 function resize(delta){                            // add / remove a course, then retrain the coach
   stopAuto();
-  if(delta>0){TOP.push(`Course ${N+1}`);start.T.push(0);start.C.push(0);start.P.push(0)}
-  else{TOP.pop();start.T.pop();start.C.pop();start.P.pop()}
+  if(delta>0){TOP.push(`Course ${N+1}`);start.T.push(0);start.C.push(0);start.P.push(0);start.S.push([])}
+  else{TOP.pop();start.T.pop();start.C.pop();start.P.pop();start.S.pop()}
   N=TOP.length;save();buildCards();restart();train()}
 cards.addEventListener("click",e=>{const b=e.target.closest("button[data-a]");if(b){stopAuto();act(+b.dataset.a,"you")}});
 $("aiStep").onclick=()=>{stopAuto();act(coachPick(env),"coach")};
